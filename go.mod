@@ -1,6 +1,8 @@
-module github.com/ka-weihe/fast-levenshtein
+module github.com/yukiteruamano/fast-levenshtein/v2
 
-go 1.15
+go 1.26
+
+toolchain go1.26.5
 
 require (
 	github.com/agnivade/levenshtein v1.1.0
