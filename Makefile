@@ -1,11 +1,11 @@
 # Makefile — fast-levenshtein (CalVer + pkg.go.dev)
-# Versionado fecha: v2026.08.24 (alias) + v2.2026.08.24 (canónico para /v2)
+# Versionado fecha: v2026.08.24 (alias humano) + v2.20260824.0 (canónico semver para /v2)
 # Uso:
 #   make test       # tests rápidos
 #   make ci         # gate completo (vet + race + cover)
 #   make push       # git push main
 #   make tags       # crea tag fecha + push + publica en proxy.golang.org
-#   make publish TAG=v2.2026.08.24  # fuerza proxy refresh de un tag existente
+#   make publish TAG=v2.20260824.0  # fuerza proxy refresh de un tag existente
 #   make version    # muestra VERSION/TAG calculados
 
 SHELL := /usr/bin/env bash
@@ -15,8 +15,12 @@ REMOTE ?= origin
 BRANCH ?= main
 
 # CalVer UTC: permite override -> make tags VERSION=2026.08.25
+# VERSION legible: YYYY.MM.DD (para README y alias)
 VERSION ?= $(shell date -u +%Y.%m.%d)
-TAG := v2.$(VERSION)
+# TAG canónico para Go proxy: v2.YYYYMMDD.0 (semver válido, 3 partes)
+# Se deriva de VERSION quitando puntos; sufijo .0 permite .1, .2 misma fecha
+VERSION_PROXY ?= $(shell echo $(VERSION) | tr -d '.')
+TAG := v2.$(VERSION_PROXY).0
 TAG_ALIAS := v$(VERSION)
 
 # Colores
@@ -34,12 +38,12 @@ help: ## Muestra ayuda
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS=":.*?## "}; {printf "  $(YELLOW)%-12s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@echo -e "Ejemplos:"
-	@echo -e "  make ci                          # gate local (vet+race+cover)"
-	@echo -e "  make push                        # git push origin main"
-	@echo -e "  make tags                        # tag fecha hoy + push + proxy refresh"
-	@echo -e "  make tags VERSION=2026.08.25     # tag fecha específica"
-	@echo -e "  make publish TAG=v2.2026.08.24   # refrescar pkg.go.dev"
-	@echo -e "  make release                     # ci + tags"
+	@echo -e "  make ci                            # gate local (vet+race+cover)"
+	@echo -e "  make push                          # git push origin main"
+	@echo -e "  make tags                          # tag fecha hoy (v2.YYYYMMDD.0 + vYYYY.MM.DD) + push + proxy"
+	@echo -e "  make tags VERSION=2026.08.25       # tag fecha específica"
+	@echo -e "  make publish TAG=v2.20260824.0     # refrescar pkg.go.dev"
+	@echo -e "  make release                       # ci + tags"
 
 # ---------------------------------------------------------------------------
 # Tests / calidad
@@ -72,15 +76,19 @@ ci: vet race cover ## Gate CI local (vet + race + cover)
 # ---------------------------------------------------------------------------
 version: ## Muestra VERSION/TAG calculados y tags existentes
 	@echo "VERSION  = $(VERSION)"
-	@echo "TAG      = $(TAG)  (canónico /v2, usado por pkg.go.dev)"
+	@echo "VERSION_PROXY = $(VERSION_PROXY) (YYYYMMDD)"
+	@echo "TAG      = $(TAG)  (canónico /v2 semver, usado por pkg.go.dev)"
 	@echo "TAG_ALIAS= $(TAG_ALIAS)  (alias legible)"
 	@echo "MODULE   = $(MODULE)"
 	@echo ""
-	@echo "Tags locales que coinciden con fecha:"
+	@echo "Tags locales (dot) que coinciden con fecha:"
 	@git tag --list "v*$(VERSION)*" | sort -V || true
 	@echo ""
+	@echo "Tags locales (proxy) que coinciden:"
+	@git tag --list "v2.$(VERSION_PROXY)*" | sort -V || true
+	@echo ""
 	@echo "Tags remotos que coinciden:"
-	@git ls-remote --tags $(REMOTE) 2>/dev/null | grep -E "v2?\.?$(VERSION)" | awk '{print $$2}' | sed 's|refs/tags/||' | sort -V || echo "(ninguno)"
+	@git ls-remote --tags $(REMOTE) 2>/dev/null | grep -E "($(VERSION)|$(VERSION_PROXY))" | awk '{print $$2}' | sed 's|refs/tags/||' | sort -V || echo "(ninguno)"
 
 check-dirty:
 	@if [ -n "$$(git status --porcelain)" ] && [ "$(FORCE)" != "1" ]; then \
@@ -108,19 +116,22 @@ push: check-dirty ## git push BRANCH a REMOTE (default origin main)
 		echo -e "$(YELLOW)ℹ Hay tags locales en HEAD no pusheados. Usa 'make tags' o 'git push $(REMOTE) --tags'$(RESET)"; \
 	fi
 
-# tag: crea tags locales (canónico + alias) con manejo de colisión .1, .2
-tag: check-ci ## Crea tags locales v2.YYYY.MM.DD + vYYYY.MM.DD (con sufijo .1 si colisiona)
+# tag: crea tags locales (canónico v2.YYYYMMDD.N + alias vYYYY.MM.DD) con colisión .1, .2
+tag: check-ci ## Crea tags locales v2.YYYYMMDD.0 + vYYYY.MM.DD (con sufijo .1 si colisiona)
 	@set -e; \
-	TAG="$(TAG)"; ALIAS="$(TAG_ALIAS)"; \
-	# — resuelve colisión para TAG canónico —; \
-	ORIG_TAG="$$TAG"; i=0; \
+	TAG="$(TAG)"; ALIAS="$(TAG_ALIAS)"; PROXY="$(VERSION_PROXY)"; VER="$(VERSION)"; \
+	# — resuelve colisión: TAG es v2.PROXY.0 -> incrementa patch: .0 .1 .2 —; \
+	ORIG_TAG="$$TAG"; ORIG_ALIAS="$$ALIAS"; PATCH=0; \
 	while git rev-parse "$$TAG" >/dev/null 2>&1 || git ls-remote --tags $(REMOTE) 2>/dev/null | grep -q "refs/tags/$$TAG$$"; do \
-		i=$$((i+1)); TAG="$$ORIG_TAG.$$i"; ALIAS="$(TAG_ALIAS).$$i"; \
-		if [ $$i -gt 20 ]; then echo -e "$(RED)Demasiadas colisiones$(RESET)"; exit 1; fi; \
+		PATCH=$$((PATCH+1)); TAG="v2.$$PROXY.$$PATCH"; ALIAS="v$$VER.$$PATCH"; \
+		if [ "$$PATCH" -eq 1 ]; then ALIAS="v$$VER.1"; fi; \
+		if [ $$PATCH -gt 20 ]; then echo -e "$(RED)Demasiadas colisiones$(RESET)"; exit 1; fi; \
 	done; \
-	if [ "$$TAG" != "$(TAG)" ]; then echo -e "$(YELLOW)⚠ $(TAG) existía, usando $$TAG$(RESET)"; fi; \
+	# Si colisionó, mapea alias: vYYYY.MM.DD -> vYYYY.MM.DD.PATCH (1er colisión) ; si no colisionó, alias sin sufijo; \
+	if [ "$$TAG" != "$(TAG)" ]; then echo -e "$(YELLOW)⚠ $(TAG) existía, usando $$TAG + $$ALIAS$(RESET)"; \
+	else ALIAS="$(TAG_ALIAS)"; fi; \
 	echo -e "$(YELLOW)→ Creando tag $$TAG$(RESET)"; \
-	git tag -a "$$TAG" -m "release $$TAG — $(MODULE)"; \
+	git tag -a "$$TAG" -m "release $$TAG — $(MODULE) (CalVer $(VERSION))"; \
 	echo -e "$(YELLOW)→ Creando alias $$ALIAS$(RESET)"; \
 	git tag -a "$$ALIAS" -m "alias $$ALIAS for $$TAG — $(MODULE)"; \
 	echo -e "$(GREEN)✓ Tags creados: $$TAG + $$ALIAS$(RESET)"; \
@@ -143,18 +154,32 @@ tags: tag ## Crea tags + push a REMOTE + publica en proxy.golang.org
 	$(MAKE) publish TAG=$$CANONICAL; \
 	rm -f .last-tag
 
-publish: ## Refresca pkg.go.dev vía proxy: make publish TAG=v2.2026.08.24
+publish: ## Refresca pkg.go.dev vía proxy: make publish TAG=v2.20260824.0
 	@set -e; \
 	TAG="$${TAG:-$(TAG)}"; \
 	if [ -z "$$TAG" ]; then echo -e "$(RED)TAG requerido: make publish TAG=v2.2026.08.24$(RESET)"; exit 1; fi; \
 	if ! git rev-parse "$$TAG" >/dev/null 2>&1 && ! git ls-remote --tags $(REMOTE) 2>/dev/null | grep -q "refs/tags/$$TAG$$"; then \
 		echo -e "$(RED)✗ Tag $$TAG no existe local ni remoto$(RESET)"; exit 1; \
 	fi; \
-	echo -e "$(YELLOW)→ GOPROXY=proxy.golang.org go list -m $(MODULE)@$$TAG$(RESET)"; \
-	GOPROXY=proxy.golang.org go list -m $(MODULE)@$$TAG; \
+	echo -e "$(YELLOW)→ Verificando tag en $(REMOTE) antes de pedir al proxy$(RESET)"; \
+	for i in 1 2 3; do git ls-remote --tags $(REMOTE) 2>/dev/null | grep -q "refs/tags/$$TAG$$" && break || { echo "  tag aún no visible en $(REMOTE), esperando 5s ($$i/3)..."; sleep 5; }; done; \
+	echo -e "$(YELLOW)→ GOPROXY=proxy.golang.org go list -m $(MODULE)@$$TAG (con reintentos)$(RESET)"; \
+	SUCCESS=0; \
+	for i in 1 2 3 4 5; do \
+		if GOPROXY=proxy.golang.org go list -m $(MODULE)@$$TAG 2>&1; then SUCCESS=1; break; fi; \
+		echo -e "$(YELLOW)  proxy aún no indexado, reintentando en 10s ($$i/5)...$(RESET)"; \
+		sleep 10; \
+	done; \
+	if [ "$$SUCCESS" != "1" ]; then \
+		echo -e "$(RED)✗ proxy no indexó $$TAG tras 5 intentos$(RESET)"; \
+		echo -e "$(YELLOW)  El tag SÍ está en GitHub — pkg.go.dev puede tardar 1-3 min. Verifica manualmente:$(RESET)"; \
+		echo -e "    curl -s https://proxy.golang.org/$(MODULE)/@v/$$TAG.info"; \
+		echo -e "    https://pkg.go.dev/$(MODULE)@$$TAG"; \
+		exit 1; \
+	fi; \
 	echo ""; \
 	echo -e "$(YELLOW)→ Verificando proxy info$(RESET)"; \
-	curl -fsSL "https://proxy.golang.org/$(MODULE)/@v/$$TAG.info" | head -c 500; echo ""; \
+	for i in 1 2 3; do curl -fsSL "https://proxy.golang.org/$(MODULE)/@v/$$TAG.info" | head -c 500 && break || { echo "  esperando proxy info 5s..."; sleep 5; }; done; echo ""; \
 	echo ""; \
 	echo -e "$(GREEN)✓ Publicado. Verifica en:$(RESET)"; \
 	echo -e "  https://pkg.go.dev/$(MODULE)@$$TAG"; \

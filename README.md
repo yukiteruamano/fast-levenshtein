@@ -165,14 +165,14 @@ make fuzz          # fuzz FuzzDistance 30s
 
 El proyecto usa **CalVer basado en fecha** `v2026.08.24` replicado en:
 
-* **Git tags:** `v2.2026.08.24` (canónico para módulo `/v2`, requerido por `proxy.golang.org`) + alias `v2026.08.24` legible.
-* **pkg.go.dev:** `https://pkg.go.dev/github.com/yukiteruamano/fast-levenshtein/v2@v2.2026.08.24` se indexa automáticamente al pushear el tag.
+* **Git tags:** `v2.20260824.0` (canónico semver para módulo `/v2`, requerido por `proxy.golang.org`) + alias `v2026.08.24` legible. El canónico es `v2.YYYYMMDD.0` porque `v2.2026.08.24` (4 partes) es semver inválido y el proxy responde 404.
+* **pkg.go.dev:** `https://pkg.go.dev/github.com/yukiteruamano/fast-levenshtein/v2@v2.20260824.0` se indexa automáticamente al pushear el tag.
 
-Si hay 2 releases el mismo día, se genera sufijo `.1`: `v2.2026.08.24.1`.
+Si hay 2 releases el mismo día, se gera sufijo `.1`: `v2.20260824.1` + alias `v2026.08.24.1`.
 
 ```bash
-make version              # muestra VERSION/TAG calculados
-make version VERSION=2026.08.25  # override fecha
+make version              # muestra VERSION/TAG calculados (ej. v2.20260824.0)
+make version VERSION=2026.08.25  # override fecha -> v2.20260825.0
 ```
 
 ### Flujo de publicación
@@ -185,24 +185,25 @@ git add -A && git commit -m "feat: ..."
 make push                 # git push origin main
 
 # 3. Crear tag fecha + push + publicar en pkg.go.dev (requiere tests OK)
-make tags                 # crea v2.2026.08.24 + v2026.08.24, push y GOPROXY refresh
+make tags                 # crea v2.20260824.0 + v2026.08.24, push y GOPROXY refresh (con reintentos)
 # o fecha específica:
-make tags VERSION=2026.08.25
+make tags VERSION=2026.08.25  # -> v2.20260825.0 + v2026.08.25
 
 # Flujo completo en uno (ci + tags):
 make release
 
 # Refrescar manualmente un tag ya existente en pkg.go.dev:
-make publish TAG=v2.2026.08.24
+make publish TAG=v2.20260824.0
 ```
 
-`pkg.go.dev` no tiene "upload" manual: se indexa al hacer `GOPROXY=proxy.golang.org go list -m github.com/yukiteruamano/fast-levenshtein/v2@v2.2026.08.24`, que es lo que hace `make publish` y el workflow `release.yml` automáticamente.
+`pkg.go.dev` no tiene "upload" manual: se indexa al hacer `GOPROXY=proxy.golang.org go list -m github.com/yukiteruamano/fast-levenshtein/v2@v2.20260824.0`, que es lo que hace `make publish` y el workflow `release.yml` automáticamente. El Makefile reintenta 5x con delay porque el proxy puede tardar 10-30s tras el push.
 
 Verifica:
 
 ```bash
-curl -s https://proxy.golang.org/github.com/yukiteruamano/fast-levenshtein/v2/@v/v2.2026.08.24.info
+curl -s https://proxy.golang.org/github.com/yukiteruamano/fast-levenshtein/v2/@v/v2.20260824.0.info
 curl -s https://proxy.golang.org/github.com/yukiteruamano/fast-levenshtein/v2/@v/list | tr ',' '\n' | grep 2026
+go list -m -json github.com/yukiteruamano/fast-levenshtein/v2@v2.20260824.0
 ```
 
 ### CI/CD

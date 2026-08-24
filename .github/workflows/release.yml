@@ -3,14 +3,14 @@ name: release
 on:
   push:
     tags:
-      - 'v*.*.*'
-      - 'v2.*.*.*'
-      - 'v*.*.*.*'
-      - 'v2.*.*.*.*'
+      - 'v*.*.*'       # alias humano v2026.08.24
+      - 'v2.*.*'       # canónico v2.20260824.0
+      - 'v*.*.*.*'     # alias con sufijo v2026.08.24.1
+      - 'v2.*.*.*'     # canónico con sufijo v2.20260824.1 (no usado, pero cubierto)
   workflow_dispatch:
     inputs:
       version:
-        description: 'CalVer a publicar (ej. 2026.08.24 o 2026.08.24.1). Se creará v2.<version>'
+        description: 'CalVer a publicar (ej. 2026.08.24 o 20260824.0). Se creará v2.YYYYMMDD.N'
         required: true
         type: string
 
@@ -39,11 +39,18 @@ jobs:
           set -e
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             V="${{ inputs.version }}"
-            # Normaliza: quita 'v' inicial si viene
+            # Normaliza: quita 'v' inicial si viene, permite 2026.08.24 o 20260824.0
             V="${V#v}"
             V="${V#v2.}"
+            # Si viene con puntos YYYY.MM.DD -> convierte a YYYYMMDD.0
+            if echo "$V" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'; then
+              V="$(echo "$V" | tr -d '.').0"
+            elif echo "$V" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$'; then
+              # 2026.08.24.1 -> 20260824.1
+              V="$(echo "$V" | sed -E 's/^([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]+)$/\1\2\3.\4/')"
+            fi
             TAG="v2.${V}"
-            echo "Manual dispatch -> TAG=$TAG"
+            echo "Manual dispatch -> TAG=$TAG (from input $V)"
           else
             TAG="${GITHUB_REF#refs/tags/}"
             echo "Push tag -> TAG=$TAG"
@@ -51,8 +58,12 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "module=github.com/yukiteruamano/fast-levenshtein/v2" >> "$GITHUB_OUTPUT"
           # Verifica semver (vMAJOR.MINOR.PATCH)
-          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.-]+)?$'; then
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9A-Za-z.-]*)?$'; then
             echo "::warning::Tag $TAG no parece semver válido, proxy puede rechazarlo"
+          fi
+          # Aviso si es alias v2026.08.24 sin v2. -> proxy lo tratará como pseudo-versión
+          if echo "$TAG" | grep -Eq '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}'; then
+            echo "::notice::Tag $TAG es alias humano; el canónico para pkg.go.dev es v2.$(echo "$TAG" | tr -d 'v.').0"
           fi
 
       - name: Validate (vet + race)
