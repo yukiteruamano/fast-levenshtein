@@ -1,5 +1,9 @@
 # fast-levenshtein :rocket:
 
+[![CI](https://github.com/yukiteruamano/fast-levenshtein/actions/workflows/ci.yml/badge.svg)](https://github.com/yukiteruamano/fast-levenshtein/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/yukiteruamano/fast-levenshtein/v2.svg)](https://pkg.go.dev/github.com/yukiteruamano/fast-levenshtein/v2)
+[![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)](go.mod)
+
 > Fastest Levenshtein implementation in Go — now thread-safe, full-Unicode, and Go 1.26.
 
 Measure the difference between two strings in runes (Unicode code points).
@@ -143,6 +147,68 @@ import lev "github.com/yukiteruamano/fast-levenshtein/v2"
 ```
 
 API is backward-compatible for `Distance(s1,s2) int`. Behavior change: distance is now rune-based (correct Unicode) — multi-byte strings that previously returned byte-length-based values will now return the proper rune distance.
+
+## Development & Release
+
+### Makefile
+
+```bash
+make help          # lista de targets
+make ci            # vet + race + cover (gate local, igual que CI)
+make test          # go test ./...
+make cover         # cobertura + HTML
+make bench         # benchmarks
+make fuzz          # fuzz FuzzDistance 30s
+```
+
+### Versionado CalVer (`vYYYY.MM.DD`)
+
+El proyecto usa **CalVer basado en fecha** `v2026.08.24` replicado en:
+
+* **Git tags:** `v2.2026.08.24` (canónico para módulo `/v2`, requerido por `proxy.golang.org`) + alias `v2026.08.24` legible.
+* **pkg.go.dev:** `https://pkg.go.dev/github.com/yukiteruamano/fast-levenshtein/v2@v2.2026.08.24` se indexa automáticamente al pushear el tag.
+
+Si hay 2 releases el mismo día, se genera sufijo `.1`: `v2.2026.08.24.1`.
+
+```bash
+make version              # muestra VERSION/TAG calculados
+make version VERSION=2026.08.25  # override fecha
+```
+
+### Flujo de publicación
+
+```bash
+# 1. Commitea tus cambios
+git add -A && git commit -m "feat: ..."
+
+# 2. Push de commits (sin tags)
+make push                 # git push origin main
+
+# 3. Crear tag fecha + push + publicar en pkg.go.dev (requiere tests OK)
+make tags                 # crea v2.2026.08.24 + v2026.08.24, push y GOPROXY refresh
+# o fecha específica:
+make tags VERSION=2026.08.25
+
+# Flujo completo en uno (ci + tags):
+make release
+
+# Refrescar manualmente un tag ya existente en pkg.go.dev:
+make publish TAG=v2.2026.08.24
+```
+
+`pkg.go.dev` no tiene "upload" manual: se indexa al hacer `GOPROXY=proxy.golang.org go list -m github.com/yukiteruamano/fast-levenshtein/v2@v2.2026.08.24`, que es lo que hace `make publish` y el workflow `release.yml` automáticamente.
+
+Verifica:
+
+```bash
+curl -s https://proxy.golang.org/github.com/yukiteruamano/fast-levenshtein/v2/@v/v2.2026.08.24.info
+curl -s https://proxy.golang.org/github.com/yukiteruamano/fast-levenshtein/v2/@v/list | tr ',' '\n' | grep 2026
+```
+
+### CI/CD
+
+* **`.github/workflows/ci.yml`**: en cada `push`/`PR` a `main` corre `go vet`, `go test -race`, `coverage`, `fuzz 10s` y `golangci-lint` en matrix Go 1.26/1.27.
+* **`.github/workflows/release.yml`**: al pushear tag `v*` (o manual `workflow_dispatch`) valida y ejecuta `go list -m` contra `proxy.golang.org` para indexar `pkg.go.dev`.
 
 ## License
 

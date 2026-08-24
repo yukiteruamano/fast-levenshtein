@@ -1,0 +1,17 @@
+# Go
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# Makefile artefact
+.last-tag
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Binarios
+/fast-levenshtein

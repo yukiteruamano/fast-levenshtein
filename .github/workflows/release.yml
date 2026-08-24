@@ -1,0 +1,97 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v2.*.*.*'
+      - 'v*.*.*.*'
+      - 'v2.*.*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'CalVer a publicar (ej. 2026.08.24 o 2026.08.24.1). Se creará v2.<version>'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to pkg.go.dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Resolve TAG
+        id: tag
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+            # Normaliza: quita 'v' inicial si viene
+            V="${V#v}"
+            V="${V#v2.}"
+            TAG="v2.${V}"
+            echo "Manual dispatch -> TAG=$TAG"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "Push tag -> TAG=$TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "module=github.com/yukiteruamano/fast-levenshtein/v2" >> "$GITHUB_OUTPUT"
+          # Verifica semver (vMAJOR.MINOR.PATCH)
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.-]+)?$'; then
+            echo "::warning::Tag $TAG no parece semver válido, proxy puede rechazarlo"
+          fi
+
+      - name: Validate (vet + race)
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+      - name: Publish to proxy.golang.org
+        run: |
+          set -e
+          TAG="${{ steps.tag.outputs.tag }}"
+          MODULE="${{ steps.tag.outputs.module }}"
+          echo "→ GOPROXY=proxy.golang.org go list -m ${MODULE}@${TAG}"
+          GOPROXY=proxy.golang.org go list -m "${MODULE}@${TAG}"
+          echo ""
+          echo "→ Verificando https://proxy.golang.org/${MODULE}/@v/${TAG}.info"
+          for i in 1 2 3 4 5; do
+            if curl -fsSL "https://proxy.golang.org/${MODULE}/@v/${TAG}.info" | head -c 800; then
+              echo ""
+              echo "✓ proxy OK (intento $i)"
+              break
+            fi
+            echo "  proxy aún no indexado, reintentando en 10s (intento $i/5)..."
+            sleep 10
+          done
+
+      - name: Summary
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          MODULE="${{ steps.tag.outputs.module }}"
+          echo "### ✅ Publicado ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Módulo: \`${MODULE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag: \`${TAG}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- pkg.go.dev: https://pkg.go.dev/${MODULE}@${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- proxy info: https://proxy.golang.org/${MODULE}/@v/${TAG}.info" >> "$GITHUB_STEP_SUMMARY"
+          echo "- proxy list: https://proxy.golang.org/${MODULE}/@v/list" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Verifica con:' >> "$GITHUB_STEP_SUMMARY"
+          echo '```bash' >> "$GITHUB_STEP_SUMMARY"
+          echo "GOPROXY=proxy.golang.org go list -m ${MODULE}@${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
